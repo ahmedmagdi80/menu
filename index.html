@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ELMENU - منيوهات الإسماعيلية</title>
+<meta name="description" content="شوف منيوهات وأسعار المطاعم والكافيهات في الإسماعيلية قبل ما تروح.">
+<style>
+:root{--bg:#f6f4ef;--ink:#1d2a2a;--mut:#66726f;--line:#d9d5c9;--acc:#0f6b5c;--card:#fff;--warn:#8a5a00}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 Tahoma,Arial,sans-serif}
+header{background:var(--acc);color:#fff;padding:16px}
+header div{max-width:760px;margin:0 auto}
+header h1{margin:0;font-size:24px;cursor:pointer}
+header p{margin:2px 0 0;opacity:.9;font-size:14px}
+main{max-width:760px;margin:0 auto;padding:16px}
+input[type=search]{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;font:inherit;margin-bottom:10px}
+button{font:inherit;cursor:pointer}
+input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid #e2b33c;outline-offset:2px}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:8px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:20px;padding:6px 14px;white-space:nowrap}
+.chip.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.card{display:block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px;color:inherit;text-decoration:none}
+.card b{font-size:17px}
+.mut{color:var(--mut);font-size:14px}
+.top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.price{font-weight:bold;white-space:nowrap}
+.btn{border:1px solid var(--acc);background:#fff;color:var(--acc);border-radius:6px;padding:8px 12px;text-decoration:none;display:inline-block}
+.btn.f{background:var(--acc);color:#fff}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+h2{font-size:18px;margin:20px 0 8px;border-bottom:2px solid var(--acc);padding-bottom:4px}
+.item{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.item.off{opacity:.5}
+.rep{background:none;border:none;color:var(--mut);font-size:13px;text-decoration:underline;padding:0}
+.stale{color:var(--warn)}
+.back{background:none;border:none;color:var(--acc);padding:0;margin-bottom:8px}
+#toast{position:fixed;bottom:16px;inset-inline:16px;max-width:400px;margin:auto;background:#1d2a2a;color:#fff;padding:10px 14px;border-radius:8px;text-align:center;display:none}
+</style>
+</head>
+<body>
+<header><div><h1 id="home">ELMENU</h1><p>اعرف الأسعار قبل ما تروح أو تطلب</p></div></header>
+<main id="m"></main>
+<div id="toast" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const db = supabase.createClient('https://epyqtibilkphljchfffs.supabase.co', 'sb_publishable_DcSaZmbHOfcN7TyYZQIQiw_IM9vgAdp');
+const $ = id => document.getElementById(id), M = $('m');
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => Number(n).toLocaleString('ar-EG', { maximumFractionDigits: 2 });
+const toast = t => { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 3000); };
+const age = d => d ? Math.floor((Date.now() - new Date(d)) / 864e5) : null;
+let places = [], type = 'الكل', timer;
+
+$('home').onclick = () => location.hash = '';
+window.onhashchange = route;
+route();
+
+function route() {
+  const m = location.hash.match(/^#\/p\/(.+)$/);
+  m ? showPlace(m[1]) : showHome();
+}
+
+async function showHome() {
+  M.innerHTML = `<input type="search" id="q" placeholder="ابحث عن أكلة أو مكان... مثال: شاورما" aria-label="بحث"><div class="chips" id="chips"></div><div id="res"><p class="mut">جاري التحميل...</p></div>`;
+  $('q').oninput = () => { clearTimeout(timer); timer = setTimeout(draw, 300); };
+  const { data, error } = await db.from('places').select('id,name,type,cuisine,area,avg_cost_per_person,prices_updated_at').eq('is_published', true).order('name');
+  if (error) return $('res').innerHTML = '<p>تعذر تحميل البيانات. حاول مرة أخرى.</p>';
+  places = data; draw();
+}
+
+async function draw() {
+  const q = $('q').value.trim(), res = $('res');
+  const types = ['الكل', ...new Set(places.map(p => p.type))];
+  $('chips').innerHTML = types.map(t => `<button class="chip ${t === type ? 'on' : ''}" data-t="${esc(t)}">${esc(t)}</button>`).join('');
+  $('chips').querySelectorAll('button').forEach(b => b.onclick = () => { type = b.dataset.t; draw(); });
+  const list = places.filter(p => (type === 'الكل' || p.type === type) && (!q || (p.name + ' ' + (p.cuisine || '')).includes(q)));
+  let html = '';
+  if (q.length >= 2) {
+    const { data } = await db.from('items').select('name,price,variant,places!inner(id,name,is_published)')
+      .ilike('name', `%${q}%`).eq('is_available', true).eq('places.is_published', true).order('price').limit(40);
+    if (data && data.length) html += `<h2>أصناف «${esc(q)}» من الأرخص</h2>` + data.map(i =>
+      `<a class="card" href="#/p/${i.places.id}"><div class="top"><b>${esc(i.name)}${i.variant ? ' - ' + esc(i.variant) : ''}</b><span class="price">${fmt(i.price)} ج</span></div><div class="mut">${esc(i.places.name)}</div></a>`).join('');
+  }
+  if (list.length) html += (q.length >= 2 ? '<h2>الأماكن</h2>' : '') + list.map(p =>
+    `<a class="card" href="#/p/${p.id}"><div class="top"><b>${esc(p.name)}</b><span class="mut">${esc(p.type)}</span></div>
+     <div class="mut">${[p.cuisine, p.area].filter(Boolean).map(esc).join(' - ')}${p.avg_cost_per_person ? ` - متوسط الفرد ${fmt(p.avg_cost_per_person)} ج` : ''}</div></a>`).join('');
+  res.innerHTML = html || `<p class="mut">${places.length ? 'مفيش نتائج. جرّب كلمة تانية.' : 'لسه مفيش منيوهات منشورة.'}</p>`;
+}
+
+async function showPlace(id) {
+  M.innerHTML = '<p class="mut">جاري التحميل...</p>';
+  const [{ data: p }, { data: secs }] = await Promise.all([
+    db.from('places').select('*').eq('id', id).eq('is_published', true).maybeSingle(),
+    db.from('sections').select('id,name,sort_order,items(id,name,description,price,variant,is_available,sort_order)').eq('place_id', id).order('sort_order')
+  ]);
+  if (!p) return M.innerHTML = '<p>المكان مش موجود.</p><button class="back" onclick="location.hash=\'\'">رجوع</button>';
+  document.title = p.name + ' - منيو وأسعار | ELMENU';
+  const d = age(p.prices_updated_at);
+  const hours = p.opens_at && p.closes_at ? `من ${esc(p.opens_at)} إلى ${esc(p.closes_at)}` : '';
+  const tags = [p.has_wifi && 'واي فاي', p.has_outdoor && 'جلسات خارجية', p.family_friendly && 'مناسب للعائلات'].filter(Boolean).join(' - ');
+  const share = 'https://wa.me/?text=' + encodeURIComponent(`منيو ${p.name} على ELMENU\n${location.href}`);
+  M.innerHTML = `<button class="back" onclick="location.hash=''">رجوع</button>
+    <h1 style="margin:0">${esc(p.name)}</h1>
+    <div class="mut">${[p.type, p.cuisine, p.area].filter(Boolean).map(esc).join(' - ')}</div>
+    ${p.address ? `<div class="mut">${esc(p.address)}</div>` : ''}
+    ${hours ? `<div class="mut">${hours}</div>` : ''}
+    ${p.avg_cost_per_person ? `<div class="mut">متوسط تكلفة الفرد: ${fmt(p.avg_cost_per_person)} ج</div>` : ''}
+    ${tags ? `<div class="mut">${esc(tags)}</div>` : ''}
+    <div class="mut ${d > 60 ? 'stale' : ''}">آخر تحديث للأسعار: ${d === null ? 'غير معروف' : d === 0 ? 'النهارده' : 'من ' + d + ' يوم'}${d > 60 ? ' (ممكن الأسعار اتغيرت)' : ''}</div>
+    <div class="acts">${p.phone ? `<a class="btn f" href="tel:${esc(p.phone)}">اتصل</a>` : ''}${/^https?:\/\//.test(p.map_url || '') ? `<a class="btn" href="${esc(p.map_url)}" target="_blank" rel="noopener">الموقع على الخريطة</a>` : ''}<a class="btn" href="${share}" target="_blank" rel="noopener">مشاركة واتساب</a></div>
+    ${(secs || []).map(s => `<h2>${esc(s.name)}</h2>` + s.items.sort((a, b) => a.sort_order - b.sort_order).map(i =>
+      `<div class="item ${i.is_available ? '' : 'off'}"><div><b>${esc(i.name)}</b>${i.variant ? ' - ' + esc(i.variant) : ''}${i.is_available ? '' : ' (غير متاح)'}
+      ${i.description ? `<div class="mut">${esc(i.description)}</div>` : ''}<button class="rep" data-i="${i.id}" data-n="${esc(i.name)}">السعر غلط؟ بلّغ</button></div>
+      <span class="price">${fmt(i.price)} ج</span></div>`).join('')).join('')}`;
+  M.querySelectorAll('.rep').forEach(b => b.onclick = () => report(b.dataset.i, id, b.dataset.n));
+}
+
+async function report(item_id, place_id, name) {
+  const v = prompt(`إيه السعر الصحيح لـ «${name}»؟ (رقم فقط)`);
+  if (v === null) return;
+  const price = Number(v.replace(/[^\d.]/g, ''));
+  if (!v.trim() || isNaN(price) || price < 0) return toast('اكتب السعر كرقم، مثال 85');
+  const { error } = await db.from('price_reports').insert({ item_id, place_id, suggested_price: price });
+  toast(error ? 'تعذر إرسال البلاغ، حاول تاني.' : 'شكراً، هنراجع السعر.');
+}
+</script>
+</body>
+</html>
