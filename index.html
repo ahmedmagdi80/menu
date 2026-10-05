@@ -47,7 +47,7 @@ h2{font-size:18px;margin:20px 0 8px;border-bottom:2px solid var(--acc);padding-b
 const db = supabase.createClient('https://epyqtibilkphljchfffs.supabase.co', 'sb_publishable_DcSaZmbHOfcN7TyYZQIQiw_IM9vgAdp');
 const $ = id => document.getElementById(id), M = $('m');
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const fmt = n => Number(n).toLocaleString('ar-EG', { maximumFractionDigits: 2 });
+const fmt = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const toast = t => { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 3000); };
 const age = d => d ? Math.floor((Date.now() - new Date(d)) / 864e5) : null;
 let places = [], type = 'الكل', timer;
