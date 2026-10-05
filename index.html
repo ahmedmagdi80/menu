@@ -33,6 +33,7 @@ h2{font-size:18px;margin:20px 0 8px;border-bottom:2px solid var(--acc);padding-b
 .item.off{opacity:.5}
 .rep{background:none;border:none;color:var(--mut);font-size:13px;text-decoration:underline;padding:0}
 .stale{color:var(--warn)}
+.ok{color:#1b6b2f;font-weight:bold;margin-inline-end:6px}.cl{color:var(--warn);margin-inline-end:6px}
 .back{background:none;border:none;color:var(--acc);padding:0;margin-bottom:8px}
 #toast{position:fixed;bottom:16px;inset-inline:16px;max-width:400px;margin:auto;background:#1d2a2a;color:#fff;padding:10px 14px;border-radius:8px;text-align:center;display:none}
 </style>
@@ -50,7 +51,18 @@ const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const fmt = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const toast = t => { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 3000); };
 const age = d => d ? Math.floor((Date.now() - new Date(d)) / 864e5) : null;
-let places = [], type = 'الكل', timer;
+let places = [], type = 'الكل', timer, onlyOpen = false;
+const cairoMin = () => { const f = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()); const g = t => +f.find(x => x.type === t).value; return (g('hour') % 24) * 60 + g('minute'); };
+const mins = t => { const [h, m] = t.split(':'); return +h * 60 + +m; };
+function openState(p) {
+  if (p.open_24h) return true;
+  if (!p.opens_time || !p.closes_time) return null;
+  const n = cairoMin(), o = mins(p.opens_time), c = mins(p.closes_time);
+  if (o === c) return null;
+  return o < c ? (n >= o && n < c) : (n >= o || n < c);
+}
+const badge = p => { const s = openState(p); return s === null ? '' : s ? '<span class="ok">مفتوح الآن</span>' : '<span class="cl">مغلق الآن</span>'; };
+const t12 = t => { let [h, m] = t.split(':').map(Number); const ap = h >= 12 ? 'م' : 'ص'; h = h % 12 || 12; return h + ':' + String(m).padStart(2, '0') + ' ' + ap; };
 
 $('home').onclick = () => location.hash = '';
 window.onhashchange = route;
@@ -64,7 +76,7 @@ function route() {
 async function showHome() {
   M.innerHTML = `<input type="search" id="q" placeholder="ابحث عن أكلة أو مكان... مثال: شاورما" aria-label="بحث"><div class="chips" id="chips"></div><div id="res"><p class="mut">جاري التحميل...</p></div>`;
   $('q').oninput = () => { clearTimeout(timer); timer = setTimeout(draw, 300); };
-  const { data, error } = await db.from('places').select('id,name,type,cuisine,area,avg_cost_per_person,prices_updated_at').eq('is_published', true).order('name');
+  const { data, error } = await db.from('places').select('id,name,type,cuisine,area,avg_cost_per_person,prices_updated_at,opens_time,closes_time,open_24h').eq('is_published', true).order('name');
   if (error) return $('res').innerHTML = '<p>تعذر تحميل البيانات. حاول مرة أخرى.</p>';
   places = data; draw();
 }
@@ -72,9 +84,10 @@ async function showHome() {
 async function draw() {
   const q = $('q').value.trim(), res = $('res');
   const types = ['الكل', ...new Set(places.map(p => p.type))];
-  $('chips').innerHTML = types.map(t => `<button class="chip ${t === type ? 'on' : ''}" data-t="${esc(t)}">${esc(t)}</button>`).join('');
-  $('chips').querySelectorAll('button').forEach(b => b.onclick = () => { type = b.dataset.t; draw(); });
-  const list = places.filter(p => (type === 'الكل' || p.type === type) && (!q || (p.name + ' ' + (p.cuisine || '')).includes(q)));
+  $('chips').innerHTML = types.map(t => `<button class="chip ${t === type ? 'on' : ''}" data-t="${esc(t)}">${esc(t)}</button>`).join('') + `<button class="chip ${onlyOpen ? 'on' : ''}" id="oc">مفتوح الآن</button>`;
+  $('chips').querySelectorAll('[data-t]').forEach(b => b.onclick = () => { type = b.dataset.t; draw(); });
+  $('oc').onclick = () => { onlyOpen = !onlyOpen; draw(); };
+  const list = places.filter(p => (type === 'الكل' || p.type === type) && (!onlyOpen || openState(p) === true) && (!q || (p.name + ' ' + (p.cuisine || '')).includes(q)));
   let html = '';
   if (q.length >= 2) {
     const { data } = await db.from('items').select('name,price,variant,places!inner(id,name,is_published)')
@@ -83,7 +96,7 @@ async function draw() {
       `<a class="card" href="#/p/${i.places.id}"><div class="top"><b>${esc(i.name)}${i.variant ? ' - ' + esc(i.variant) : ''}</b><span class="price">${fmt(i.price)} ج</span></div><div class="mut">${esc(i.places.name)}</div></a>`).join('');
   }
   if (list.length) html += (q.length >= 2 ? '<h2>الأماكن</h2>' : '') + list.map(p =>
-    `<a class="card" href="#/p/${p.id}"><div class="top"><b>${esc(p.name)}</b><span class="mut">${esc(p.type)}</span></div>
+    `<a class="card" href="#/p/${p.id}"><div class="top"><b>${esc(p.name)}</b><span class="mut">${badge(p)}${esc(p.type)}</span></div>
      <div class="mut">${[p.cuisine, p.area].filter(Boolean).map(esc).join(' - ')}${p.avg_cost_per_person ? ` - متوسط الفرد ${fmt(p.avg_cost_per_person)} ج` : ''}</div></a>`).join('');
   res.innerHTML = html || `<p class="mut">${places.length ? 'مفيش نتائج. جرّب كلمة تانية.' : 'لسه مفيش منيوهات منشورة.'}</p>`;
 }
@@ -97,14 +110,14 @@ async function showPlace(id) {
   if (!p) return M.innerHTML = '<p>المكان مش موجود.</p><button class="back" onclick="location.hash=\'\'">رجوع</button>';
   document.title = p.name + ' - منيو وأسعار | ELMENU';
   const d = age(p.prices_updated_at);
-  const hours = p.opens_at && p.closes_at ? `من ${esc(p.opens_at)} إلى ${esc(p.closes_at)}` : '';
+  const hours = p.open_24h ? 'مفتوح 24 ساعة' : (p.opens_time && p.closes_time) ? `من ${t12(p.opens_time)} إلى ${t12(p.closes_time)}`: '';
   const tags = [p.has_wifi && 'واي فاي', p.has_outdoor && 'جلسات خارجية', p.family_friendly && 'مناسب للعائلات'].filter(Boolean).join(' - ');
   const share = 'https://wa.me/?text=' + encodeURIComponent(`منيو ${p.name} على ELMENU\n${location.href}`);
   M.innerHTML = `<button class="back" onclick="location.hash=''">رجوع</button>
     <h1 style="margin:0">${esc(p.name)}</h1>
     <div class="mut">${[p.type, p.cuisine, p.area].filter(Boolean).map(esc).join(' - ')}</div>
     ${p.address ? `<div class="mut">${esc(p.address)}</div>` : ''}
-    ${hours ? `<div class="mut">${hours}</div>` : ''}
+    ${hours ? `<div class="mut">${badge(p)} ${hours}</div>` : ''}
     ${p.avg_cost_per_person ? `<div class="mut">متوسط تكلفة الفرد: ${fmt(p.avg_cost_per_person)} ج</div>` : ''}
     ${tags ? `<div class="mut">${esc(tags)}</div>` : ''}
     <div class="mut ${d > 60 ? 'stale' : ''}">آخر تحديث للأسعار: ${d === null ? 'غير معروف' : d === 0 ? 'النهارده' : 'من ' + d + ' يوم'}${d > 60 ? ' (ممكن الأسعار اتغيرت)' : ''}</div>
