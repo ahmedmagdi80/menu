@@ -33,7 +33,7 @@ h2{font-size:18px;margin:20px 0 8px;border-bottom:2px solid var(--acc);padding-b
 .item.off{opacity:.5}
 .rep{background:none;border:none;color:var(--mut);font-size:13px;text-decoration:underline;padding:0}
 .stale{color:var(--warn)}
-.ok{color:#1b6b2f;font-weight:bold;margin-inline-end:6px}.cl{color:var(--warn);margin-inline-end:6px}
+.ok,.cl{display:inline-block;white-space:nowrap;margin-inline-end:8px}.ok{color:#1b6b2f;font-weight:bold}.cl{color:var(--warn)}
 .back{background:none;border:none;color:var(--acc);padding:0;margin-bottom:8px}
 #toast{position:fixed;bottom:16px;inset-inline:16px;max-width:400px;margin:auto;background:#1d2a2a;color:#fff;padding:10px 14px;border-radius:8px;text-align:center;display:none}
 </style>
@@ -96,8 +96,8 @@ async function draw() {
       `<a class="card" href="#/p/${i.places.id}"><div class="top"><b>${esc(i.name)}${i.variant ? ' - ' + esc(i.variant) : ''}</b><span class="price">${fmt(i.price)} ج</span></div><div class="mut">${esc(i.places.name)}</div></a>`).join('');
   }
   if (list.length) html += (q.length >= 2 ? '<h2>الأماكن</h2>' : '') + list.map(p =>
-    `<a class="card" href="#/p/${p.id}"><div class="top"><b>${esc(p.name)}</b><span class="mut">${badge(p)}${esc(p.type)}</span></div>
-     <div class="mut">${[p.cuisine, p.area].filter(Boolean).map(esc).join(' - ')}${p.avg_cost_per_person ? ` - متوسط الفرد ${fmt(p.avg_cost_per_person)} ج` : ''}</div></a>`).join('');
+    `<a class="card" href="#/p/${p.id}"><div class="top"><b>${esc(p.name)}</b><span class="mut">${esc(p.type)}</span></div>
+     <div class="mut">${badge(p)} ${[p.cuisine, p.area].filter(Boolean).map(esc).join(' - ')}${p.avg_cost_per_person ? ` - متوسط الفرد ${fmt(p.avg_cost_per_person)} ج` : ''}</div></a>`).join('');
   res.innerHTML = html || `<p class="mut">${places.length ? 'مفيش نتائج. جرّب كلمة تانية.' : 'لسه مفيش منيوهات منشورة.'}</p>`;
 }
 
