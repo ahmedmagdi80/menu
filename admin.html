@@ -115,7 +115,7 @@ let current = null;
 $('file').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
-  current = parse(wb); render();
+  current = wb.Sheets['الأماكن'] ? await parseBulk(wb) : parse(wb); render();
 };
 
 function toDate(v) {
@@ -169,6 +169,7 @@ function parse(wb) {
 }
 
 function render() {
+  if (current.bulk) return renderBulk();
   const { place, items, errs } = current, el = $('prev');
   let h = '';
   if (errs.length) h += `<div class="msg err"><b>صحّح الأخطاء دي في الملف وارفعه تاني:</b><ul class="errs">${errs.slice(0, 30).map(e => `<li>${esc(e)}</li>`).join('')}</ul>${errs.length > 30 ? `<div>و${errs.length - 30} أخطاء أخرى.</div>` : ''}</div>`;
@@ -305,6 +306,96 @@ async function loadReports() {
   });
   el.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => {
     await db.from('price_reports').update({ status: 'rejected' }).eq('id', b.dataset.r); loadReports(); });
+}
+
+/* ---------- bulk upload (many places in one file) ---------- */
+const norm = v => s(v).replace(/\s+/g, ' ');
+function buildPlace(raw, errs, pre) {
+  const h24 = yn(raw.open_24h) === true, ot = toTime(raw.opens_time), ct = toTime(raw.closes_time);
+  const avg = s(raw.avg_cost_per_person) === '' ? null : Number(raw.avg_cost_per_person);
+  const place = {
+    name: norm(raw.name), type: s(raw.type) || 'مطعم', cuisine: s(raw.cuisine) || null, area: s(raw.area) || null,
+    address: s(raw.address) || null, phone: s(raw.phone) || null, map_url: s(raw.map_url) || null, social_url: s(raw.social_url) || null,
+    opens_time: h24 ? null : ot, closes_time: h24 ? null : ct, open_24h: h24, avg_cost_per_person: avg,
+    has_wifi: yn(raw.has_wifi), has_outdoor: yn(raw.has_outdoor), family_friendly: yn(raw.family_friendly), prices_updated_at: toDate(raw.prices_updated_at)
+  };
+  if (!place.name) errs.push(pre + 'اسم المكان فارغ.');
+  if (!h24 && (s(raw.opens_time) !== '' || s(raw.closes_time) !== '') && (!ot || !ct)) errs.push(pre + 'الساعات لازم تكون بالشكل 12:00 أو 02:30 (24 ساعة) في الخانتين.');
+  if (avg !== null && (isNaN(avg) || avg < 0)) errs.push(pre + 'متوسط التكلفة لازم يكون رقم.');
+  if (!place.prices_updated_at) errs.push(pre + 'اكتب «آخر تحديث للأسعار» بصيغة 2026-10-04.');
+  return place;
+}
+
+async function parseBulk(wb) {
+  const errs = [], ps = wb.Sheets['الأماكن'], ms = wb.Sheets['المنيو'];
+  if (!ps || !ms) return { bulk: true, list: [], skipped: [], errs: ['الملف لازم يحتوي على شيتي «الأماكن» و«المنيو» بنفس الأسماء.'] };
+  const { data: ex } = await db.from('places').select('name');
+  const existing = new Set((ex || []).map(x => norm(x.name)));
+  const map = new Map(), skipped = new Set();
+  XLSX.utils.sheet_to_json(ps, { raw: true, defval: '' }).forEach((row, i) => {
+    if (Object.values(row).every(v => s(v) === '')) return;
+    const raw = {}; for (const k in row) { const f = FIELDS[s(k)]; if (f) raw[f] = row[k]; }
+    const place = buildPlace(raw, errs, `الأماكن سطر ${i + 2}: `);
+    if (!place.name) return;
+    if (map.has(place.name) || skipped.has(place.name)) return errs.push(`الأماكن سطر ${i + 2}: «${place.name}» مكرر في الملف.`);
+    if (existing.has(place.name)) return skipped.add(place.name);
+    map.set(place.name, { place, items: [], seen: new Set() });
+  });
+  XLSX.utils.sheet_to_json(ms, { header: 1, raw: true, defval: '' }).slice(1).forEach((r, i) => {
+    if (r.every(c => s(c) === '')) return;
+    const n = i + 2, pn = norm(r[0]);
+    if (skipped.has(pn)) return;
+    const g = map.get(pn);
+    if (!g) return errs.push(`المنيو سطر ${n}: المكان «${pn}» مش موجود في شيت «الأماكن».`);
+    const sec = norm(r[1]), name = norm(r[2]), pr = s(r[4]).replace(/,/g, ''), price = pr === '' ? NaN : Number(pr), variant = s(r[5]);
+    if (!sec) errs.push(`المنيو سطر ${n}: القسم فارغ.`);
+    if (!name) errs.push(`المنيو سطر ${n}: اسم الصنف فارغ.`);
+    if (isNaN(price) || price < 0) errs.push(`المنيو سطر ${n}: السعر لازم يكون رقم (مثال 85).`);
+    const key = [sec, name, variant].join('|');
+    if (g.seen.has(key)) errs.push(`المنيو سطر ${n}: الصنف «${name}» مكرر في نفس قسم «${pn}».`);
+    g.seen.add(key);
+    g.items.push({ sec, name, desc: s(r[3]), price, variant, av: s(r[6]) !== 'لا' });
+  });
+  const list = [...map.values()].map(({ place, items }) => ({ place, items }));
+  list.forEach(x => { if (!x.items.length) errs.push(`المكان «${x.place.name}» ما لهوش أصناف في شيت «المنيو».`); });
+  if (!list.length && !skipped.size) errs.push('مفيش أماكن في الملف.');
+  return { bulk: true, list, skipped: [...skipped], errs };
+}
+
+function renderBulk() {
+  const { list, skipped, errs } = current, el = $('prev');
+  let h = '';
+  if (errs.length) h += `<div class="msg err"><b>صحّح الأخطاء دي في الملف وارفعه تاني:</b><ul class="errs">${errs.slice(0, 40).map(e => `<li>${esc(e)}</li>`).join('')}</ul>${errs.length > 40 ? `<div>و${errs.length - 40} أخطاء أخرى.</div>` : ''}</div>`;
+  if (skipped.length) h += `<div class="msg ok">أماكن موجودة بالفعل وهيتم تخطيها (${skipped.length}): ${skipped.map(esc).join('، ')}<br>لتعديل مكان موجود استخدم زرار «تعديل».</div>`;
+  if (list.length) h += `<p><b>${list.length}</b> مكان جديد - <b>${list.reduce((a, x) => a + x.items.length, 0)}</b> صنف</p><div class="tw"><table><tr><th>المكان</th><th>النوع</th><th>الأصناف</th><th>آخر تحديث للأسعار</th></tr>${list.map(x =>
+    `<tr><td>${esc(x.place.name)}</td><td>${esc(x.place.type)}</td><td>${x.items.length}</td><td>${esc(x.place.prices_updated_at || '-')}</td></tr>`).join('')}</table></div>`;
+  if (!errs.length && list.length) h += `<p><button id="saveb">حفظ ${list.length} مكان (غير منشورين)</button></p><div id="smsg"></div>`;
+  el.innerHTML = h;
+  if ($('saveb')) $('saveb').onclick = saveBulk;
+}
+
+async function insertPlace(place, items) {
+  const { data: pl, error: e1 } = await db.from('places').insert({ ...place, slug: 'p-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), is_published: false }).select('id').single();
+  if (e1) throw e1;
+  try {
+    const names = [...new Set(items.map(x => x.sec))];
+    const { data: sd, error: e2 } = await db.from('sections').insert(names.map((name, i) => ({ place_id: pl.id, name, sort_order: i }))).select('id,name');
+    if (e2) throw e2;
+    const m = Object.fromEntries(sd.map(x => [x.name, x.id]));
+    const { error: e3 } = await db.from('items').insert(items.map((x, i) => ({ place_id: pl.id, section_id: m[x.sec], name: x.name, description: x.desc || null, price: x.price, variant: x.variant || null, is_available: x.av, sort_order: i })));
+    if (e3) throw e3;
+  } catch (e) { await db.from('places').delete().eq('id', pl.id); throw e; }
+}
+
+async function saveBulk() {
+  const btn = $('saveb'), out = $('smsg'); btn.disabled = true; let n = 0;
+  for (const { place, items } of current.list) {
+    show(out, `جاري الحفظ ${n + 1} من ${current.list.length}...`, 'ok');
+    try { await insertPlace(place, items); n++; }
+    catch (e) { btn.disabled = false; loadList(); return show(out, `توقف الحفظ عند «${esc(place.name)}»: ${esc(e.message)}<br>اتحفظ ${n} مكان قبله. صلّح المشكلة وارفع نفس الملف تاني، والأماكن المحفوظة هتتخطى تلقائياً.`, 'err'); }
+  }
+  show(out, `تم حفظ ${n} مكان (غير منشورين). راجعهم من القائمة ثم اضغط «نشر».`, 'ok');
+  $('file').value = ''; loadList();
 }
 
 gate();
